@@ -15,13 +15,14 @@
 
 import errno
 import fcntl
-import os
 
 import eventlet
 import eventlet.debug
 import eventlet.greenthread
 import eventlet.hubs
 
+# We want the blocking APIs, because we set file descriptors to non-blocking.
+os = eventlet.patcher.original("os")
 
 class PipeMutex:
     """Mutex using a pipe.
