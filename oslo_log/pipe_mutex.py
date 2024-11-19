@@ -27,6 +27,8 @@ import eventlet.patcher
 
 # We want the blocking APIs, because we set file descriptors to non-blocking.
 os = eventlet.patcher.original("os")
+# Used to communicate between real threads:
+SimpleQueue = eventlet.patcher.original("queue").SimpleQueue
 
 
 class _BaseMutex:
@@ -196,9 +198,20 @@ class _AsyncioMutex(_BaseMutex):
         if current_loop == self._loop:
             return func()
 
-        return asyncio.run_coroutine_threadsafe(
-            func(), self._loop
-        ).wait()
+        # We're in a different thread, so need to schedule it:
+        queue = SimpleQueue()
+        def run_in_asyncio():
+            try:
+                queue.put(func())
+            except BaseException as e:
+                queue.put(e)
+
+        self._loop.call_soon_threadsafe(lambda: eventlet.spawn(run_in_asyncio))
+        result = queue.get()
+        if isinstance(result, BaseException):
+            raise result
+        else:
+            return result
 
     def _acquire(self, blocking, current_greenthread_id):
         if blocking:
@@ -213,7 +226,7 @@ class _AsyncioMutex(_BaseMutex):
         )
 
     def _release(self):
-        return self._run_in_asyncio_thread(lambda: self._asyncio_lock.release())
+        self._run_in_asyncio_thread(lambda: self._asyncio_lock.release())
 
     def close(self):
         """Close the mutex."""
