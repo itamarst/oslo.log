@@ -184,7 +184,11 @@ class _AsyncioMutex(_BaseMutex):
         self._asyncio_lock = asyncio.Lock()
         self._threading_lock = threading.RLock()
 
-    async def _asyncio_acquire(self, timeout, current_greenthread_id):
+    async def _asyncio_acquire(self, blocking, current_greenthread_id):
+        if blocking:
+            timeout = None
+        else:
+            timeout = 0.000001
         try:
             await asyncio.wait_for(
                 self._asyncio_lock.acquire(), timeout=timeout
@@ -196,13 +200,8 @@ class _AsyncioMutex(_BaseMutex):
             return True
 
     def _acquire_eventlet(self, blocking, current_greenthread_id):
-        if blocking:
-            timeout = None
-        else:
-            timeout = 0.000001
-
         return eventlet.asyncio.spawn_for_awaitable(
-            self._asyncio_acquire(timeout, current_greenthread_id)
+            self._asyncio_acquire(blocking, current_greenthread_id)
         ).wait()
 
     def acquire(self, blocking=True):
