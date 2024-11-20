@@ -221,10 +221,14 @@ class _AsyncioMutex(_BaseMutex):
         # Then, do the eventlet locking:
         return _BaseMutex.acquire(self, blocking=blocking)
 
+    # Preserve documentation, without copy/pasting:
+    acquire.__doc__ = _BaseMutex.acquire.__doc__
+
     def _release_eventlet(self):
         self._asyncio_lock.release()
 
     def release(self):
+        """Release the mutex."""
         # We release in reverse order from acquire(), first eventlet and then
         # the RLock:
         _BaseMutex.release(self)
