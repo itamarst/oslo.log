@@ -16,6 +16,7 @@
 import asyncio
 import errno
 import fcntl
+import importlib.metadata
 
 import eventlet
 import eventlet.asyncio
@@ -243,6 +244,12 @@ class _AsyncioMutex(_BaseMutex):
 
 _HUB = eventlet.hubs.get_hub()
 if isinstance(_HUB, eventlet.hubs.asyncio.Hub):
+    _major, _minor = map(int, importlib.metadata.version("eventlet").split(".")[:2])
+    if (_major, _minor) <= (0, 38):
+        raise RuntimeError(
+            "eventlet 0.38 or earlier have buggy asyncio hub: "
+            "https://github.com/eventlet/eventlet/issues/994"
+        )
     PipeMutex = _AsyncioMutex
 else:
     PipeMutex = _ReallyPipeMutex
