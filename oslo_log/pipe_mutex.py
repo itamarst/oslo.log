@@ -29,6 +29,8 @@ import eventlet.patcher
 os = eventlet.patcher.original("os")
 # Used to communicate between real threads:
 SimpleQueue = eventlet.patcher.original("queue").SimpleQueue
+# Real OS-level threads:
+threading = eventlet.patcher.original("threading")
 
 
 class _BaseMutex:
@@ -53,7 +55,7 @@ class _BaseMutex:
             self.recursion_depth += 1
             return True
 
-        return self._acquire(blocking, current_greenthread_id)
+        return self._acquire_eventlet(blocking, current_greenthread_id)
 
     def release(self):
         """Release the mutex."""
@@ -66,7 +68,7 @@ class _BaseMutex:
             return
 
         self.owner = None
-        self._release()
+        self._release_eventlet()
 
     def close(self):
         """Close the mutex.
@@ -113,7 +115,7 @@ class _ReallyPipeMutex(_BaseMutex):
         # our calls to trampoline(), but eventlet does not support that.
         eventlet.debug.hub_prevent_multiple_readers(False)
 
-    def _acquire(self, blocking, current_greenthread_id):
+    def _acquire_eventlet(self, blocking, current_greenthread_id):
         while True:
             try:
                 # If there is a byte available, this will read it and remove
@@ -134,7 +136,7 @@ class _ReallyPipeMutex(_BaseMutex):
                 # else writes to self.wfd.
                 eventlet.hubs.trampoline(self.rfd, read=True)
 
-    def _release(self):
+    def _release_eventlet(self):
         os.write(self.wfd, b'X')
 
     def close(self):
@@ -170,15 +172,19 @@ class _AsyncioMutex(_BaseMutex):
     """Alternative implementation of mutex for eventlet asyncio hub.
 
     When using the eventlet asyncio hub, multiple file descriptors as readers
-    aren't supported.  So instead we use an asyncio Lock.
+    aren't supported.  So instead, we use two levels of locking:
+
+        1. A normal RLock, for locking across OS threads.
+
+        2. An ``asyncio.Lock`` for locking across greenlets within a single OS
+           thread (each OS thread running greenlets has its own asyncio loop)
     """
     def __init__(self):
         _BaseMutex.__init__(self)
         self._asyncio_lock = asyncio.Lock()
-        # The asyncio loop in the main thread:
-        self._loop = _HUB.loop
+        self._threading_lock = threading.RLock()
 
-    async def _underlying_acquire(self, timeout, current_greenthread_id):
+    async def _asyncio_acquire(self, timeout, current_greenthread_id):
         try:
             await asyncio.wait_for(
                 self._asyncio_lock.acquire(), timeout=timeout
@@ -189,48 +195,46 @@ class _AsyncioMutex(_BaseMutex):
             self.owner = current_greenthread_id
             return True
 
-    def _run_in_asyncio_thread(self, func):
-        # If we're in the asyncio thread, we can just call this directly:
-        try:
-            current_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            current_loop = None
-        if current_loop == self._loop:
-            return func()
-
-        # We're in a different thread, so need to schedule it:
-        queue = SimpleQueue()
-        def run_in_asyncio():
-            try:
-                queue.put(func())
-            except BaseException as e:
-                queue.put(e)
-
-        self._loop.call_soon_threadsafe(lambda: eventlet.spawn(run_in_asyncio))
-        result = queue.get()
-        if isinstance(result, BaseException):
-            raise result
-        else:
-            return result
-
-    def _acquire(self, blocking, current_greenthread_id):
+    def _acquire_eventlet(self, blocking, current_greenthread_id):
         if blocking:
             timeout = None
         else:
             timeout = 0.000001
 
-        return self._run_in_asyncio_thread(
-            lambda: eventlet.asyncio.spawn_for_awaitable(
-                self._underlying_acquire(timeout, current_greenthread_id)
-            ).wait()
-        )
+        return eventlet.asyncio.spawn_for_awaitable(
+            self._asyncio_acquire(timeout, current_greenthread_id)
+        ).wait()
 
-    def _release(self):
-        self._run_in_asyncio_thread(lambda: self._asyncio_lock.release())
+    def acquire(self, blocking=True):
+        # First, acquire the RLock:
+        rlock_acquired = self._threading_lock.acquire(blocking=False)
+        if not rlock_acquired and not blocking:
+            return False
+        # Simulate blocking while allowing other greenlets to run:
+        while not rlock_acquired:
+            rlock_acquired = self._threading_lock.acquire(blocking=False)
+            # The chance of hitting this path is usually quite low (it requires
+            # multiple _OS_ threads having a conflict) and sleeping for too
+            # short a time leads to very slow results in one of the tests,
+            # perhaps due to lots of context switching overhead. So compromise
+            # on a short but not too-short sleep.
+            eventlet.sleep(0.0001)
+        # Then, do the eventlet locking:
+        return _BaseMutex.acquire(self, blocking=blocking)
+
+    def _release_eventlet(self):
+        self._asyncio_lock.release()
+
+    def release(self):
+        # We release in reverse order from acquire(), first eventlet and then
+        # the RLock:
+        _BaseMutex.release(self)
+        self._threading_lock.release()
 
     def close(self):
         """Close the mutex."""
         del self._asyncio_lock
+        del self._threading_lock
         _BaseMutex.close(self)
 
 
