@@ -33,6 +33,9 @@ SimpleQueue = eventlet.patcher.original("queue").SimpleQueue
 # Real OS-level threads:
 threading = eventlet.patcher.original("threading")
 
+# We want the blocking APIs, because we set file descriptors to non-blocking.
+os = eventlet.patcher.original("os")
+
 
 class _BaseMutex:
     """Shared code for different mutex implementations."""
@@ -167,6 +170,13 @@ class _ReallyPipeMutex(_BaseMutex):
         # [1] and that's a completely ridiculous thing to expect callers to
         # do, so nobody does it and that's okay.
         self.close()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.release()
 
 
 class _AsyncioMutex(_BaseMutex):
