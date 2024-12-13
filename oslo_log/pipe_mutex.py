@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import asyncio
+from asyncio.exceptions import TimeoutError as AsyncioTimeoutError
 import errno
 import fcntl
 import importlib.metadata
