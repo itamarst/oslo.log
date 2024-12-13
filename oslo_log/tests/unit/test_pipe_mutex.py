@@ -127,35 +127,30 @@ class TestPipeMutex(unittest.TestCase):
         # working. However, this test's failure means that the mutex is
         # definitely broken.
         sequence = []
-        time = eventlet.patcher.original("time")
 
-        def do_stuff(real_thread):
+        def do_stuff():
             n = 10
             while n > 0:
                 self.mutex.acquire()
                 sequence.append("<")
-                if real_thread:
-                    time.sleep(0.0001)
-                else:
-                    eventlet.sleep(0.0001)
+                eventlet.sleep(0.0001)
                 sequence.append(">")
                 self.mutex.release()
                 n -= 1
 
-        greenthread1 = eventlet.spawn(do_stuff, False)
-        greenthread2 = eventlet.spawn(do_stuff, False)
+        greenthread1 = eventlet.spawn(do_stuff)
+        greenthread2 = eventlet.spawn(do_stuff)
 
         real_thread1 = eventlet.patcher.original('threading').Thread(
-            target=lambda: do_stuff(True))
+            target=do_stuff)
         real_thread1.start()
 
         real_thread2 = eventlet.patcher.original('threading').Thread(
-            target=lambda: do_stuff(True))
+            target=do_stuff)
         real_thread2.start()
 
         greenthread1.wait()
         greenthread2.wait()
-        eventlet.sleep(1)
         real_thread1.join()
         real_thread2.join()
 
@@ -203,7 +198,6 @@ class TestPipeMutex(unittest.TestCase):
             target=pthread2)
         real_thread2.start()
 
-        eventlet.sleep(1)
         real_thread1.join()
         real_thread2.join()
         self.assertEqual(thread_id, owner)
