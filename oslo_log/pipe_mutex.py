@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import asyncio
+from asyncio.exceptions import TimeoutError as AsyncioTimeoutError
 import errno
 import fcntl
 import importlib.metadata
@@ -204,7 +205,7 @@ class _AsyncioMutex(_BaseMutex):
             await asyncio.wait_for(
                 self._asyncio_lock.acquire(), timeout=timeout
             )
-        except TimeoutError:
+        except AsyncioTimeoutError:
             return False
         else:
             self.owner = current_greenthread_id
