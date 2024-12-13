@@ -255,9 +255,9 @@ class _AsyncioMutex(_BaseMutex):
 _HUB = eventlet.hubs.get_hub()
 if isinstance(_HUB, eventlet.hubs.asyncio.Hub):
     major, minor, patch = map(int, importlib.metadata.version("eventlet").split(".")[:3])
-    if (major, minor, patch) < (0, 39, 0):
+    if (major, minor, patch) < (0, 38, 2):
         raise RuntimeError(
-            "eventlet 0.39.0 or later is required when using asyncio hub"
+            "eventlet 0.38.2 or later is required when using asyncio hub"
         )
     PipeMutex = _AsyncioMutex
 else:
